@@ -25,12 +25,6 @@ struct DLine {
 	double y2;
 };
 
-typedef struct Point Point;
-struct Point {
-	int x;
-	int y;
-};
-
 typedef struct DPoint DPoint;
 struct DPoint {
 	double x;
@@ -152,7 +146,7 @@ void render(SDL_Renderer* renderer, Line (&lines)[5], DPoint pos, double watchin
 }
 
 
-int main()
+int main(int argc, char* argv[])
 {
 	SDL_Window* window = nullptr;
 	SDL_Renderer* renderer = nullptr;
