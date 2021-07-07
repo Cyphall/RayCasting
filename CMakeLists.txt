@@ -1,9 +1,22 @@
-cmake_minimum_required(VERSION 3.14)
-project(RayCasting)
+cmake_minimum_required(VERSION 3.19)
 
-link_directories(lib)
-include_directories(include)
+set(CMAKE_TOOLCHAIN_FILE "vcpkg/scripts/buildsystems/vcpkg.cmake")
+set(VCPKG_TARGET_TRIPLET "x64-windows-static")
+
+cmake_policy(SET CMP0091 NEW)
+
+project(RayCasting)
 
 add_executable(RayCasting src/main.cpp)
 
-target_link_libraries(RayCasting -lmingw32 -lSDL2main -lSDL2)
+set_property(TARGET RayCasting PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+target_compile_features(RayCasting PRIVATE cxx_std_20)
+target_compile_options(RayCasting PRIVATE "$<$<CONFIG:Release>:-O2>")
+
+find_package(SDL2 CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
+
+target_link_libraries(RayCasting PRIVATE
+	SDL2::SDL2main SDL2::SDL2-static
+	glm::glm)
