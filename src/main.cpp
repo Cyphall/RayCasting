@@ -1,21 +1,13 @@
-#define _USE_MATH_DEFINES
 #include <iostream>
 #include <SDL2/SDL.h>
 #include <random>
 #include <glm/glm.hpp>
 
-
-#define H_FOV 80.0
-#define V_FOV H_FOV * 9.0/16.0
-#define SCREEN_WIDTH 1920
-#define SCREEN_HEIGHT 1080
-
-
-struct Line
-{
-	glm::dvec2 start;
-	glm::dvec2 end;
-};
+const int SCREEN_WIDTH = 1920;
+const int SCREEN_HEIGHT = 1080;
+const double H_FOV = glm::radians(80.0);
+const double V_FOV = 2.0 * glm::atan(glm::tan(H_FOV * 0.5) / (static_cast<double>(SCREEN_WIDTH) / static_cast<double>(SCREEN_HEIGHT)));
+const double WALL_HEIGHT = 2.0;
 
 struct Ray
 {
@@ -25,10 +17,10 @@ struct Ray
 
 struct Wall
 {
-	Line line;
+	glm::dvec2 start;
+	glm::dvec2 end;
 	glm::u8vec3 color;
 };
-
 
 bool initSDL(SDL_Window** window, SDL_Renderer** renderer)
 {
@@ -38,7 +30,7 @@ bool initSDL(SDL_Window** window, SDL_Renderer** renderer)
         return false;
 	}
 	
-	*window = SDL_CreateWindow("RayCasting", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_FULLSCREEN);
+	*window = SDL_CreateWindow("RayCasting", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_BORDERLESS);
 	if (*window == nullptr)
 	{
     	printf("Error initializing Window");
@@ -78,19 +70,12 @@ char get_line_intersection(double p0_x, double p0_y, double p1_x, double p1_y, d
     return 0; // No collision
 }
 
-double radian(double value)
-{
-	return value*M_PI/180.0;
-}
-
 glm::dvec2 getDirFromAngle(double angle)
 {
-	glm::dvec2 res;
-	
-	res.x = cos(radian(angle));
-	res.y = sin(radian(angle));
-	
-	return res;
+	return {
+		glm::sin(angle),
+		glm::cos(angle)
+	};
 }
 
 struct IntersectionResult
@@ -108,7 +93,7 @@ bool intersect(const Ray& ray, const std::vector<Wall>& walls, IntersectionResul
 	
 	for(const Wall& wall : walls)
 	{
-		if (get_line_intersection(wall.line.start.x, wall.line.start.y, wall.line.end.x, wall.line.end.y, ray.origin.x, ray.origin.y, ray.origin.x + ray.direction.x * 1000, ray.origin.y + ray.direction.y * 1000, &intersection.x, &intersection.y))
+		if (get_line_intersection(wall.start.x, wall.start.y, wall.end.x, wall.end.y, ray.origin.x, ray.origin.y, ray.origin.x + ray.direction.x * 1000, ray.origin.y + ray.direction.y * 1000, &intersection.x, &intersection.y))
 		{
 			double dist = glm::length(intersection - ray.origin);
 			if (dist <= 0) continue;
@@ -147,53 +132,58 @@ void render(SDL_Renderer* renderer, std::vector<Wall>& walls, glm::dvec2 pos, do
 	
 	IntersectionResult result{};
 	
-	for (int i=0; i<SCREEN_WIDTH; i++)
+	double distanceToHeightRatio = (1.0 * glm::tan(V_FOV / 2.0)) * 2.0;
+	
+	glm::dvec2 centerRay = getDirFromAngle(camAngle);
+	glm::dvec2 leftRay = getDirFromAngle(camAngle - H_FOV / 2.0);
+	glm::dvec2 rightRay = getDirFromAngle(camAngle + H_FOV / 2.0);
+	
+	for (int i = 0; i < SCREEN_WIDTH; i++)
 	{
-		double angle = camAngle - H_FOV / 2.0 + (double)i * (H_FOV / (double)SCREEN_WIDTH);
-		ray.direction = getDirFromAngle(angle);
+		double uvX = (i + 0.5) / SCREEN_WIDTH;
+		ray.direction = glm::normalize(glm::mix(leftRay, rightRay, uvX));
 		
 		if (intersect(ray, walls, result))
 		{
-			double angleV = glm::degrees(glm::atan(1 / result.distance));
-			double taille = angleV / (V_FOV/2) * (SCREEN_WIDTH/2.0);
-			int haut = (int)(SCREEN_HEIGHT/2.0 - taille);
-			int bas = (int)(SCREEN_HEIGHT/2.0 + taille);
+			// corrects fisheye effect
+			double angleFromCenter = glm::acos(glm::dot(ray.direction, centerRay));
+			double correctedDistance = result.distance * glm::cos(angleFromCenter);
+			
+			double normalizedHeight = WALL_HEIGHT / (distanceToHeightRatio * correctedDistance);
+			double pixelHeight = normalizedHeight * SCREEN_HEIGHT;
+			double up = SCREEN_HEIGHT / 2.0 - pixelHeight / 2.0;
+			double down = SCREEN_HEIGHT / 2.0 + pixelHeight / 2.0;
 			SDL_SetRenderDrawColor(renderer, result.intersectedWall->color.r, result.intersectedWall->color.g, result.intersectedWall->color.b, 255);
-			SDL_RenderDrawLine(renderer, i, haut, i, bas);
+			SDL_RenderDrawLine(renderer, i, (int)up, i, (int)down);
 		}
 	}
 	
 	SDL_RenderPresent(renderer);
 }
 
-
 int main(int argc, char* argv[])
 {
 	SDL_Window* window = nullptr;
 	SDL_Renderer* renderer = nullptr;
-	SDL_Event event;
-	
-	std::random_device rd;
-	auto mt = std::mt19937(rd());
-	std::uniform_real_distribution<double> posDist(0.0, 50.0);
-	std::independent_bits_engine<std::default_random_engine, CHAR_BIT, unsigned long> colorDist(rd());
-	
 	if (!initSDL(&window, &renderer))
 	{
 		return EXIT_FAILURE;
 	}
 	
 	bool running = true;
-	glm::dvec2 pos = {0.0, 0.0};
-	double watchingDirection = 80.0;
+	glm::dvec2 pos = {0.0, -25.0};
+	double watchingDirection = 0.0;
+	
+	std::random_device rd;
+	auto mt = std::mt19937(rd());
+	std::uniform_real_distribution<double> posDist(-25.0, 25.0);
+	std::independent_bits_engine<std::default_random_engine, CHAR_BIT, unsigned long> colorDist(rd());
 	
 	std::vector<Wall> walls(50);
-	for(Wall &wall : walls)
+	for(Wall& wall : walls)
 	{
-		wall.line.start.x = (int)posDist(mt);
-		wall.line.start.y = (int)posDist(mt);
-		wall.line.end.x = (int)posDist(mt);
-		wall.line.end.y = (int)posDist(mt);
+		wall.start = {posDist(mt), posDist(mt)};
+		wall.end = {posDist(mt), posDist(mt)};
 		
 		wall.color.r = colorDist();
 		wall.color.g = colorDist();
@@ -207,6 +197,7 @@ int main(int argc, char* argv[])
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 	
 	double cameraSensitivity = 10;
+	SDL_Event event{};
 	while(running)
 	{
 		while(SDL_PollEvent(&event))
@@ -245,23 +236,23 @@ int main(int argc, char* argv[])
 		
 		if (keys[SDL_SCANCODE_W])
 		{
-			pos += getDirFromAngle(watchingDirection) * walkingSpeed * deltaTime;
+			pos += getDirFromAngle(glm::radians(watchingDirection)) * walkingSpeed * deltaTime;
 		}
 		if (keys[SDL_SCANCODE_A])
 		{
-			pos += getDirFromAngle(watchingDirection-90.0) * walkingSpeed * deltaTime;
+			pos += getDirFromAngle(glm::radians(watchingDirection - 90.0)) * walkingSpeed * deltaTime;
 		}
 		if (keys[SDL_SCANCODE_S])
 		{
-			pos += getDirFromAngle(watchingDirection+180.0) * walkingSpeed * deltaTime;
+			pos += getDirFromAngle(glm::radians(watchingDirection + 180.0)) * walkingSpeed * deltaTime;
 		}
 		if (keys[SDL_SCANCODE_D])
 		{
-			pos += getDirFromAngle(watchingDirection+90.0) * walkingSpeed * deltaTime;
+			pos += getDirFromAngle(glm::radians(watchingDirection + 90.0)) * walkingSpeed * deltaTime;
 		}
 		
 		
-		render(renderer, walls, pos, watchingDirection);
+		render(renderer, walls, pos, glm::radians(watchingDirection));
 		
 	}
 	SDL_Quit();
